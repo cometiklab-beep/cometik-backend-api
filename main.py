@@ -30,7 +30,7 @@ API_DESCRIPTION = (
 app = FastAPI(
     title="COMETI-K Backend Clínico y Lingüístico",
     description=API_DESCRIPTION,
-    version="2.0.1"
+    version="2.0.2" # Versión con corrección de sintaxis
 )
 
 # Directorio de almacenamiento de datos clínicos
@@ -61,12 +61,12 @@ DB_ENGINE = None
 if DATABASE_URL and create_engine:
     try:
         DB_ENGINE = create_engine(DATABASE_URL)
-        # Prueba de conexión que puede fallar por URL/servidor
+        # Prueba de conexión. Si falla por URL o servidor, el "except" lo maneja.
         with DB_ENGINE.connect() as connection:
             connection.execute(text("SELECT 1"))
         print("✅ Motor de PostgreSQL configurado y probado correctamente.")
     except Exception as e:
-        # El servidor NO MUERE aquí. Solo se registra la advertencia.
+        # El servidor CONTINÚA aquí.
         print(f"❌ ADVERTENCIA: Error crítico de conexión/URL de PostgreSQL: {e}. El servidor CONTINUARÁ. El guardado en BD no estará disponible.")
         DB_ENGINE = None 
 
@@ -193,7 +193,14 @@ async def upload_audio(
         )
 
     # El resto de la lógica de transcripción (si Whisper está activo)
-    # ... (Se mantiene, pero está protegido por el chequeo de WHISPER_MODEL)
+    # Ya que el modelo está deshabilitado, esta parte es inaccesible,
+    # pero está sintácticamente correcta por si se habilita en el futuro.
+    
+    # Lógica simulada de guardado de archivo (si se llegara a este punto)
+    document_folder = STORAGE_DIR / document_id
+    if not document_folder.exists():
+        document_folder.mkdir()
+    
     return JSONResponse(content={
         "document_id": document_id,
         "pregunta_id": pregunta_id,
@@ -219,9 +226,4 @@ def analyze_text(request: AnalysisRequest):
         
     return AnalysisResponse(**analysis_data)
     
-            
-    except Exception as e:
-        print(f"Advertencia: No se pudo guardar el archivo JSON de análisis. {e}")
-            
-    return AnalysisResponse(**analysis_data)
     
