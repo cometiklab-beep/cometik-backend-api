@@ -5,5 +5,3 @@ gunicorn
 openai-whisper
 sqlalchemy
 psycopg2-binary
-# Si usas alguna librería de llama-cpp-python (aunque esté simulado, a veces requiere el paquete)
-# llama-cpp-python
