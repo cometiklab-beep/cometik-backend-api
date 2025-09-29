@@ -5,3 +5,4 @@ gunicorn
 openai-whisper
 sqlalchemy
 psycopg2-binary
+python-multipart
