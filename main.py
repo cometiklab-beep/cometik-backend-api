@@ -1,17 +1,18 @@
 import os
 import uuid
 import json
-import re 
-import csv 
 from datetime import datetime
 from pathlib import Path
 import tempfile 
+import re 
+import csv 
 
+# Importaciones de librerías
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-# Intenta importar los módulos. Solo se importarán, pero no se cargarán si se usa Render Free.
+# Intenta importar los módulos clave.
 try:
     import whisper
     from sqlalchemy import create_engine, text 
@@ -24,25 +25,39 @@ except ImportError as e:
 
 API_DESCRIPTION = (
     "API para la recolección, transcripción y análisis automatizado de respuestas verbales infantiles "
-    "en el marco de la validación convergente entre el CCC-2 y COMETI-K. Versión robusta para Render."
+    "en el marco de la validación convergente entre el CCC-2 y COMETI-K. Versión robusta y profesional para Render."
 )
 
 app = FastAPI(
     title="COMETI-K Backend Clínico y Lingüístico",
     description=API_DESCRIPTION,
-    version="1.1.1" # Versión actualizada
+    version="2.0.0" # Versión final y estable
 )
 
 # Directorio de almacenamiento de datos clínicos
+# Se usa la ruta recomendada para el filesystem de Render
 STORAGE_DIR = Path("/opt/render/project/src/datos_clinicos") 
 if not STORAGE_DIR.exists():
     STORAGE_DIR.mkdir()
 
 # --- CARGA DE MODELOS Y BD (Global) ---
 
-# Carga del Modelo Whisper - FORZADO A SIMULACIÓN EN RENDER POR LÍMITE DE MEMORIA (512Mi)
+# Carga del Modelo Whisper - GESTIÓN DE MEMORIA
 WHISPER_MODEL = None
-print("⚠️ Modelo Whisper forzado a SIMULACIÓN (None) debido al límite de memoria de Render (512Mi). El endpoint /upload_audio/ devolverá 503.")
+WHISPER_DISABLED = os.environ.get('WHISPER_DISABLED', '0') 
+
+if WHISPER_DISABLED == '1':
+    # La solución al error Out of Memory (OOM) en Render Free.
+    print("⚠️ Modelo Whisper deshabilitado por WHISPER_DISABLED=1. Evitando OOM en Render Free.")
+else:
+    try:
+        if whisper:
+            # Intenta cargar el modelo 'tiny' si los recursos lo permiten
+            WHISPER_MODEL = whisper.load_model("tiny") 
+            print("✅ Modelo Whisper 'tiny' cargado correctamente.")
+    except Exception as e:
+        print(f"❌ Error al cargar el modelo Whisper: {e}. La transcripción no estará disponible.")
+        WHISPER_MODEL = None
 
 # Configuración de la Base de Datos
 DATABASE_URL = os.environ.get('DATABASE_URL')
@@ -56,7 +71,7 @@ if DATABASE_URL and create_engine:
 
 # LLAMA SIMULACIÓN
 LLAMA_MODEL = None
-print("⚠️ Modo de Análisis de LLama forzado a SIMULACIÓN para evitar Timeouts.")
+print("⚠️ Modo de Análisis de LLama forzado a SIMULACIÓN.")
 
 # --- MODELOS DE DATOS ---
 class AnalysisRequest(BaseModel):
@@ -80,7 +95,7 @@ class AnalysisResponse(BaseModel):
 # --- FUNCIONES DE SIMULACIÓN Y ANÁLISIS ---
 
 def simulate_llama_analysis(transcription: str) -> dict:
-    """Función de análisis SIMULADO."""
+    """Función de análisis SIMULADO (La lógica de tu LLama simulado)."""
     word_count = len(transcription.split())
     
     if word_count < 5:
@@ -115,7 +130,7 @@ def simulate_llama_analysis(transcription: str) -> dict:
     }
 
 def run_llama_analysis(transcription: str, pregunta_id: str) -> dict:
-    """Simulación o análisis real con LLama."""
+    """Simulación del análisis LLM."""
     return simulate_llama_analysis(transcription)
 
 def save_to_database(analysis_data: dict, transcription: str, document_id: str):
@@ -146,7 +161,6 @@ def save_to_database(analysis_data: dict, transcription: str, document_id: str):
         columns = ', '.join(data.keys())
         values_placeholders = ', '.join([f":{k}" for k in data.keys()])
         
-        # Se asume que la tabla es 'cometik_analisis'
         sql_insert = text(f"""
             INSERT INTO cometik_analisis ({columns})
             VALUES ({values_placeholders})
@@ -173,35 +187,63 @@ async def upload_audio(
     audio_file: UploadFile = File(...)
 ):
     """
-    Recibe un archivo de audio. La transcripción está deshabilitada en Render Free.
+    Recibe un archivo de audio. Lanza 503 si Whisper está deshabilitado.
     """
     
     if not WHISPER_MODEL:
-        # Se lanza este error porque el modelo no se cargó debido al OOM
+        # Se lanza este error si WHISPER_DISABLED=1 está activo en Render
         raise HTTPException(
             status_code=503, 
-            detail="El modelo de transcripción Whisper no está cargado. Límite de memoria de Render alcanzado."
+            detail="El servicio de transcripción está deshabilitado. Límite de memoria de hosting alcanzado."
         )
 
-    # Si por alguna razón la carga de Whisper funcionara en el futuro, 
-    # la lógica de guardado y transcripción se ejecutaría aquí.
+    document_folder = STORAGE_DIR / document_id
+    if not document_folder.exists():
+        document_folder.mkdir()
+        
+    temp_dir = Path(tempfile.gettempdir())
+    file_path = temp_dir / f"{uuid.uuid4()}_{audio_file.filename}"
     
-    # ... (Si el modelo estuviera cargado, el resto de la lógica de transcripción seguiría aquí)
-    
-    # Dado que esto no se ejecutará, se mantiene un placeholder de respuesta si el modelo falla.
+    # 2. Guardar el archivo de audio
+    try:
+        with open(file_path, "wb") as buffer:
+            while chunk := await audio_file.read(1024 * 1024):
+                buffer.write(chunk)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al guardar el archivo: {e}")
+
+    # 3. Transcribir el audio usando Whisper
+    try:
+        # Aquí solo se ejecutará si WHISPER_MODEL fue cargado con éxito
+        result = WHISPER_MODEL.transcribe(str(file_path)) 
+        transcription = result["text"].strip()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error durante la transcripción de Whisper: {e}")
+    finally:
+        os.remove(file_path) 
+
+    # 4. Guardar la transcripción
+    try:
+        resumen_path = document_folder / f"RESUMEN_TRANSCRIPCIONES_{document_id}.txt"
+        with open(resumen_path, 'a', encoding='utf-8') as f:
+            f.write(f"--- PREGUNTA {pregunta_id} ---\n")
+            f.write(f"Transcripción: {transcription}\n\n")
+            
+    except Exception as e:
+        print(f"Advertencia: No se pudo escribir en el archivo resumen (.txt). {e}")
+        
+    # 5. Respuesta final
     return JSONResponse(content={
         "document_id": document_id,
         "pregunta_id": pregunta_id,
-        "transcription": "TRANSCRIPCIÓN DESHABILITADA (OOM en Render)",
-        "message": "Audio guardado, transcripción deshabilitada para evitar OOM."
+        "transcription": transcription,
+        "message": "Audio guardado, transcrito y añadido al resumen del participante."
     })
-
 
 @app.post("/analyze_text/", response_model=AnalysisResponse, tags=["Análisis LLM"])
 def analyze_text(request: AnalysisRequest):
     """
-    Recibe una transcripción de texto y realiza un análisis SIMULADO, 
-    guardando el resultado en PostgreSQL y un archivo JSON.
+    Realiza un análisis SIMULADO y guarda el resultado en PostgreSQL y un archivo JSON.
     """
     
     analysis_data = run_llama_analysis(request.transcription, request.pregunta_id)
@@ -234,4 +276,3 @@ def analyze_text(request: AnalysisRequest):
             
     return AnalysisResponse(**analysis_data)
     
-
