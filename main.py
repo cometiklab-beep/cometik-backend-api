@@ -8,15 +8,12 @@ import re
 import csv 
 
 # Importaciones de librerías
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-
-# Intenta importar los módulos clave.
+# La importación de SQLAlchemy y Whisper se protege con try/except en la inicialización
 try:
     import whisper
     from sqlalchemy import create_engine, text 
 except ImportError as e:
+    # Este mensaje solo debería aparecer si faltan módulos en requirements.txt
     print(f"❌ ADVERTENCIA CRÍTICA: Faltan módulos clave (Whisper/SQLAlchemy). Las funciones fallarán. {e}")
     whisper = None 
     create_engine = None 
@@ -24,23 +21,33 @@ except ImportError as e:
 # --- CONFIGURACIÓN DE LA API ---
 
 API_DESCRIPTION = (
-    "API para la recolección, transcripción y análisis automatizado de respuestas verbales infantiles. Versión robusta para Render."
+    "**API Backend Clínico y Lingüístico para la Batería COMETI-K**\n\n"
+    "Esta plataforma se enfoca en realizar la **validez convergente entre el CCC-2 y COMETI-K**, "
+    "una prueba psicométrica gamificada (batería cognitivo-lingüística 2D en Unity) diseñada para "
+    "población de **6 a 12 años**.\n\n"
+    "**Criterios de Evaluación (DSM-5 Trastorno de la Comunicación Social - Pragmático):**\n"
+    "1. Uso del lenguaje en contextos sociales.\n"
+    "2. Cambio del lenguaje según contexto o interlocutor.\n"
+    "3. Seguimiento de normas conversacionales y narrativas.\n"
+    "4. Comprensión de inferencias, metáforas y lenguaje no literal.\n\n"
+    "**Objetivo:** Interpretar los resultados desde un **enfoque pragmático-lingüístico** más allá del enfoque clínico tradicional."
 )
 
 app = FastAPI(
     title="COMETI-K Backend Clínico y Lingüístico",
     description=API_DESCRIPTION,
-    version="2.0.2" # Versión con corrección de sintaxis
+    version="2.0.3" 
 )
 
 # Directorio de almacenamiento de datos clínicos
+# Se usa la ruta recomendada para el filesystem de Render
 STORAGE_DIR = Path("/opt/render/project/src/datos_clinicos") 
 if not STORAGE_DIR.exists():
     STORAGE_DIR.mkdir()
 
 # --- CARGA DE MODELOS Y BD (Global) ---
 
-# GESTIÓN DE MEMORIA - Solución al error OOM
+# GESTIÓN DE MEMORIA (Whisper) - Solución al error OOM
 WHISPER_MODEL = None
 WHISPER_DISABLED = os.environ.get('WHISPER_DISABLED', '0') 
 
@@ -55,18 +62,18 @@ else:
         print(f"❌ Error al cargar el modelo Whisper: {e}. La transcripción no estará disponible.")
         WHISPER_MODEL = None
 
-# Configuración de la Base de Datos - AISLAMIENTO DE FALLO
+# Configuración de la Base de Datos - AISLAMIENTO DE FALLO Y CONEXIÓN ROBUSTA
 DATABASE_URL = os.environ.get('DATABASE_URL')
 DB_ENGINE = None
 if DATABASE_URL and create_engine:
     try:
         DB_ENGINE = create_engine(DATABASE_URL)
-        # Prueba de conexión. Si falla por URL o servidor, el "except" lo maneja.
+        # Prueba de conexión. Si la URL es correcta, esto funciona.
         with DB_ENGINE.connect() as connection:
             connection.execute(text("SELECT 1"))
         print("✅ Motor de PostgreSQL configurado y probado correctamente.")
     except Exception as e:
-        # El servidor CONTINÚA aquí.
+        # El servidor CONTINÚA, incluso si la BD falla.
         print(f"❌ ADVERTENCIA: Error crítico de conexión/URL de PostgreSQL: {e}. El servidor CONTINUARÁ. El guardado en BD no estará disponible.")
         DB_ENGINE = None 
 
@@ -74,7 +81,7 @@ if DATABASE_URL and create_engine:
 LLAMA_MODEL = None
 print("⚠️ Modo de Análisis de LLama forzado a SIMULACIÓN.")
 
-# --- MODELOS DE DATOS ---
+# --- MODELOS DE DATOS (Pydantic) ---
 class AnalysisRequest(BaseModel):
     document_id: str
     pregunta_id: str
@@ -93,13 +100,13 @@ class AnalysisResponse(BaseModel):
     analisis_complejidad_sintactica: int
     analisis_disfluencias: int
 
-# --- FUNCIONES DE SIMULACIÓN Y ANÁLISIS ---
+# --- FUNCIONES DE SIMULACIÓN Y BD ---
 
 def simulate_llama_analysis(transcription: str) -> dict:
     """Función de análisis SIMULADO."""
     word_count = len(transcription.split())
     
-    # Lógica de simulación...
+    # Lógica de simulación simple basada en longitud
     if word_count < 5:
         puntuaciones_dsm5 = [0, 0, 1, 0] 
         puntuaciones_discurso = [0, 1]  
@@ -136,7 +143,7 @@ def save_to_database(analysis_data: dict, transcription: str, document_id: str):
     if not DB_ENGINE:
         print("⚠️ No se pudo guardar en la DB: Motor no inicializado.")
         return
-    # Lógica de guardado en DB... (asumiendo que la tabla es 'cometik_analisis')
+    
     data = {
         'document_id': document_id,
         'timestamp': datetime.now().isoformat(),
@@ -187,16 +194,13 @@ async def upload_audio(
     Recibe un archivo de audio. Lanza 503 si Whisper está deshabilitado.
     """
     if not WHISPER_MODEL:
+        # El modelo está deshabilitado para evitar OOM
         raise HTTPException(
             status_code=503, 
             detail="El servicio de transcripción está deshabilitado. Límite de memoria de hosting alcanzado."
         )
 
-    # El resto de la lógica de transcripción (si Whisper está activo)
-    # Ya que el modelo está deshabilitado, esta parte es inaccesible,
-    # pero está sintácticamente correcta por si se habilita en el futuro.
-    
-    # Lógica simulada de guardado de archivo (si se llegara a este punto)
+    # Lógica de guardado de audio y transcripción (solo si Whisper estuviera activo)
     document_folder = STORAGE_DIR / document_id
     if not document_folder.exists():
         document_folder.mkdir()
@@ -212,7 +216,7 @@ async def upload_audio(
 @app.post("/analyze_text/", response_model=AnalysisResponse, tags=["Análisis LLM"])
 def analyze_text(request: AnalysisRequest):
     """
-    Recibe texto y realiza un análisis SIMULADO, guardando el resultado.
+    Recibe texto y realiza un análisis SIMULADO, guardando el resultado en BD y JSON.
     """
     analysis_data = run_llama_analysis(request.transcription, request.pregunta_id)
     analysis_data['pregunta_id'] = request.pregunta_id
@@ -221,9 +225,8 @@ def analyze_text(request: AnalysisRequest):
     if not document_folder.exists():
         document_folder.mkdir()
             
-    # Guardado en DB y JSON...
+    # Guardado en DB 
     save_to_database(analysis_data, request.transcription, request.document_id)
         
     return AnalysisResponse(**analysis_data)
-    
     
