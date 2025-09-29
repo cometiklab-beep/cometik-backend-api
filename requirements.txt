@@ -5,3 +5,4 @@ python-dotenv
 openai-whisper
 pydantic
 llama-cpp-python
+
