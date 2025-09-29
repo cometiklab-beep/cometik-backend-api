@@ -7,13 +7,16 @@ import tempfile
 import re 
 import csv 
 
-# Importaciones de librerías
-# La importación de SQLAlchemy y Whisper se protege con try/except en la inicialización
+# Importaciones de librerías CRÍTICAS
+from fastapi import FastAPI, UploadFile, File, HTTPException # <--- ¡ESTA ES LA LÍNEA CORREGIDA!
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+# Intenta importar los módulos clave.
 try:
     import whisper
     from sqlalchemy import create_engine, text 
 except ImportError as e:
-    # Este mensaje solo debería aparecer si faltan módulos en requirements.txt
     print(f"❌ ADVERTENCIA CRÍTICA: Faltan módulos clave (Whisper/SQLAlchemy). Las funciones fallarán. {e}")
     whisper = None 
     create_engine = None 
@@ -36,11 +39,10 @@ API_DESCRIPTION = (
 app = FastAPI(
     title="COMETI-K Backend Clínico y Lingüístico",
     description=API_DESCRIPTION,
-    version="2.0.3" 
+    version="2.0.4" # Nueva versión con corrección de importación
 )
 
 # Directorio de almacenamiento de datos clínicos
-# Se usa la ruta recomendada para el filesystem de Render
 STORAGE_DIR = Path("/opt/render/project/src/datos_clinicos") 
 if not STORAGE_DIR.exists():
     STORAGE_DIR.mkdir()
@@ -229,4 +231,5 @@ def analyze_text(request: AnalysisRequest):
     save_to_database(analysis_data, request.transcription, request.document_id)
         
     return AnalysisResponse(**analysis_data)
+    
     
