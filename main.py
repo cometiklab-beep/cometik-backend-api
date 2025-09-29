@@ -7,10 +7,11 @@ import tempfile
 import re 
 import csv 
 
-# Importaciones de librerías CRÍTICAS
-from fastapi import FastAPI, UploadFile, File, HTTPException # <--- ¡ESTA ES LA LÍNEA CORREGIDA!
+# Importaciones de librerías CRÍTICAS (Asegúrate de que estas 4 líneas existan)
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel 
+from typing import Optional # Aunque no se usa directamente, es bueno tenerla si se necesitan campos opcionales.
 
 # Intenta importar los módulos clave.
 try:
@@ -39,7 +40,7 @@ API_DESCRIPTION = (
 app = FastAPI(
     title="COMETI-K Backend Clínico y Lingüístico",
     description=API_DESCRIPTION,
-    version="2.0.4" # Nueva versión con corrección de importación
+    version="2.1.0"
 )
 
 # Directorio de almacenamiento de datos clínicos
@@ -70,12 +71,10 @@ DB_ENGINE = None
 if DATABASE_URL and create_engine:
     try:
         DB_ENGINE = create_engine(DATABASE_URL)
-        # Prueba de conexión. Si la URL es correcta, esto funciona.
         with DB_ENGINE.connect() as connection:
             connection.execute(text("SELECT 1"))
         print("✅ Motor de PostgreSQL configurado y probado correctamente.")
     except Exception as e:
-        # El servidor CONTINÚA, incluso si la BD falla.
         print(f"❌ ADVERTENCIA: Error crítico de conexión/URL de PostgreSQL: {e}. El servidor CONTINUARÁ. El guardado en BD no estará disponible.")
         DB_ENGINE = None 
 
@@ -84,11 +83,26 @@ LLAMA_MODEL = None
 print("⚠️ Modo de Análisis de LLama forzado a SIMULACIÓN.")
 
 # --- MODELOS DE DATOS (Pydantic) ---
+
+# Modelo para los datos de registro (nuevo)
+class ParticipanteRegistro(BaseModel):
+    document_id: str # Documento de Identidad
+    nombre: str
+    genero: str
+    edad: int
+    acudiente_relacion: str
+    acudiente_nombre: str
+    direccion: str
+    celular: str
+    correo: str
+
+# Modelo para la solicitud de análisis
 class AnalysisRequest(BaseModel):
     document_id: str
     pregunta_id: str
     transcription: str
 
+# Modelo para la respuesta de análisis
 class AnalysisResponse(BaseModel):
     calificacion_pragmatica_dsm5: float  
     calificacion_pragmatica_ampliada: float
@@ -108,7 +122,6 @@ def simulate_llama_analysis(transcription: str) -> dict:
     """Función de análisis SIMULADO."""
     word_count = len(transcription.split())
     
-    # Lógica de simulación simple basada en longitud
     if word_count < 5:
         puntuaciones_dsm5 = [0, 0, 1, 0] 
         puntuaciones_discurso = [0, 1]  
@@ -186,6 +199,35 @@ def read_root():
     """Verifica si la API está en funcionamiento."""
     return {"status": "ok", "message": "API de COMETI-K activa y lista."}
 
+# NUEVO ENDPOINT PARA REGISTRAR PARTICIPANTES
+@app.post("/register_participant/", tags=["Registro"])
+def register_participant(data: ParticipanteRegistro):
+    """Guarda los datos personales del participante en la DB (reemplaza al CSV local)."""
+    if not DB_ENGINE:
+        raise HTTPException(status_code=503, detail="Servicio de base de datos no disponible.")
+    
+    try:
+        sql_insert = text("""
+            INSERT INTO registro_participantes (
+                document_id, nombre, genero, edad, acudiente_relacion, 
+                acudiente_nombre, direccion, celular, correo
+            )
+            VALUES (
+                :document_id, :nombre, :genero, :edad, :acudiente_relacion, 
+                :acudiente_nombre, :direccion, :celular, :correo
+            )
+            ON CONFLICT (document_id) DO NOTHING;
+        """)
+        
+        with DB_ENGINE.connect() as connection:
+            connection.execute(sql_insert, data.model_dump()) 
+            connection.commit()
+        return {"status": "ok", "message": f"Participante {data.document_id} registrado con éxito."}
+    except Exception as e:
+        print(f"❌ Error al registrar participante: {e}")
+        raise HTTPException(status_code=500, detail="Error interno al guardar los datos.")
+
+
 @app.post("/upload_audio/", tags=["Audio y Transcripción"])
 async def upload_audio(
     document_id: str,
@@ -218,7 +260,7 @@ async def upload_audio(
 @app.post("/analyze_text/", response_model=AnalysisResponse, tags=["Análisis LLM"])
 def analyze_text(request: AnalysisRequest):
     """
-    Recibe texto y realiza un análisis SIMULADO, guardando el resultado en BD y JSON.
+    Recibe texto y realiza un análisis SIMULADO, guardando el resultado en BD.
     """
     analysis_data = run_llama_analysis(request.transcription, request.pregunta_id)
     analysis_data['pregunta_id'] = request.pregunta_id
@@ -231,5 +273,4 @@ def analyze_text(request: AnalysisRequest):
     save_to_database(analysis_data, request.transcription, request.document_id)
         
     return AnalysisResponse(**analysis_data)
-    
     
