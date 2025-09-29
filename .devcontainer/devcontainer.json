@@ -1,0 +1,21 @@
+{
+    "image": "mcr.microsoft.com/devcontainers/python:3.11",
+    "postCreateCommand": "sudo apt-get update && sudo apt-get install -y ffmpeg",
+    "portsAttributes": {
+        "8000": {
+            "label": "Cometik API",
+            "onAutoForward": "notify"
+        }
+    },
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.shell.linux": "/bin/bash"
+            },
+            "extensions": [
+                "ms-python.python",
+                "ms-azuretools.vscode-docker"
+            ]
+        }
+    }
+}
