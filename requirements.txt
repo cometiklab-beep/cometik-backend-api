@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+openai-whisper
+pydantic
+llama-cpp-python
